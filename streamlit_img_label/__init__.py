@@ -13,7 +13,8 @@ if not _RELEASE:
 else:
     parent_dir = os.path.dirname(os.path.abspath(__file__))
     build_dir = os.path.join(parent_dir, "frontend/build")
-    _component_func = components.declare_component("st_img_label", path=build_dir)
+    _component_func = components.declare_component("st_img_label",
+                                                   path=build_dir)
 
 
 def st_img_label(resized_img, box_color="blue", rects=[], key=None):
@@ -110,7 +111,8 @@ if not _RELEASE:
         image_index = st.session_state["image_index"]
         next_image_index = idm.get_next_annotation_image(image_index)
         if next_image_index:
-            st.session_state["image_index"] = idm.get_next_annotation_image(image_index)
+            st.session_state["image_index"] = idm.get_next_annotation_image(
+                image_index)
         else:
             st.warning("All images are annotated.")
             next_image()
@@ -153,8 +155,10 @@ if not _RELEASE:
     def annotate():
         im.save_annotation()
         image_annotate_file_name = img_file_name.split(".")[0] + ".xml"
-        if image_annotate_file_name not in st.session_state["annotation_files"]:
-            st.session_state["annotation_files"].append(image_annotate_file_name)
+        if image_annotate_file_name not in st.session_state[
+                "annotation_files"]:
+            st.session_state["annotation_files"].append(
+                image_annotate_file_name)
         next_annotate_file()
 
     if rects:
@@ -171,7 +175,8 @@ if not _RELEASE:
                 if prev_img[1]:
                     default_index = custom_labels.index(prev_img[1])
 
-                select_label = col2.selectbox(
-                    "Label", custom_labels, key=f"label_{i}", index=default_index
-                )
+                select_label = col2.selectbox("Label",
+                                              custom_labels,
+                                              key=f"label_{i}",
+                                              index=default_index)
                 im.set_annotation(i, select_label)

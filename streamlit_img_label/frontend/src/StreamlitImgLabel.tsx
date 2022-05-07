@@ -204,7 +204,7 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         return () => {
             window
                 .matchMedia("(prefers-color-scheme: dark)")
-                .removeEventListener("change", () => {})
+                .removeEventListener("change", () => { })
         }
     }, [])
 
