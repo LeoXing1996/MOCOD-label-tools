@@ -6,6 +6,8 @@ from collections import defaultdict
 from copy import deepcopy
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 from PIL import Image
 
 from .annotation import output_xml, read_xml
@@ -231,7 +233,52 @@ class MOCODPairImageManager(ImageManager):
         mask_crop_pil = Image.fromarray(mask_crop)
         return image_crop_pil, mask_crop_pil
 
-    def paste_on_bg(self, rects, bg_im):
+    @torch.no_grad()
+    def forward_model(self, fg, mask, bg, model):
+
+        def pil_to_tensor(inp):
+            tensor = torch.from_numpy(inp)
+            tensor = tensor[None, ...].permute(0, 3, 1, 2)
+            return tensor.type(torch.float32)
+
+        def normalize(ten):
+            ten = ((ten / 255.) - 0.5) / 0.5
+            return ten
+
+        # 1. to tensor
+        fg_tensor = pil_to_tensor(fg).cuda()
+        bg_tensor = pil_to_tensor(bg).cuda()
+        mask_tensor = pil_to_tensor(mask).cuda()
+
+        # 2. transform
+        fg_tensor = normalize(fg_tensor)
+        bg_tensor = normalize(bg_tensor)
+        # mask_tensor[mask_tensor != 0] = 1  # convert to [0, 1]
+        mask_tensor = mask_tensor[:, 0][:, None, ...]
+
+        # 3. resize
+        old_size = fg_tensor.shape[2:]
+        fg_tensor = F.interpolate(fg_tensor, size=(256, 256), mode='bicubic')
+        bg_tensor = F.interpolate(bg_tensor, size=(256, 256), mode='bicubic')
+        mask_tensor = F.interpolate(mask_tensor,
+                                    size=(256, 256),
+                                    mode='bicubic')
+
+        # 4. forward network
+        pred = model.processImage(fg_tensor, mask_tensor, bg_tensor)
+
+        pred_rgb = pred[0:1]
+        pred_rgb_resize = F.interpolate(pred_rgb,
+                                        size=[*old_size],
+                                        mode='bicubic')[0]
+
+        # 5. post process
+        pred_rgb_resize_np = pred_rgb_resize.permute(1, 2, 0).cpu().numpy()
+        pred_rgb_resize_np = (pred_rgb_resize_np + 1) / 2 * 255.
+
+        return pred_rgb_resize_np
+
+    def paste_on_bg(self, rects, bg_im, model=None):
         """
         Args:
             rects (list): the position of the bounding box
@@ -261,6 +308,15 @@ class MOCODPairImageManager(ImageManager):
         result_dict = dict(fg_resize=obj_img_resize,
                            mask_resize=mask_img_resize,
                            bg_paste=bg_img)
+
+        if model is not None:
+            bg_comb_refine = self.forward_model(obj_resize, mask_resize,
+                                                bg_crop, model)
+            bg_img_np_refine = deepcopy(bg_img_np)
+            bg_img_np_refine[top:top + height,
+                             left:left + width, :] = bg_comb_refine
+            bg_img_refine = Image.fromarray(bg_img_np_refine.astype(np.uint8))
+            result_dict['bg_refine'] = bg_img_refine
 
         return result_dict
 
@@ -325,8 +381,8 @@ class MOCODManager:
         + ....
     """
 
-    # LABELS = ['Person', 'Carrier', 'Tank', 'Armored', 'Car']
-    LABELS = ['Person']
+    LABELS = ['Person', 'Carrier', 'Tank', 'Armored', 'Car']
+    # LABELS = ['Person']
 
     LABEL_TO_OBJ = {
         'Person': ['girl', 'woman', 'man', 'walkingman', 'men', 'Ped3'],
@@ -350,6 +406,13 @@ class MOCODManager:
         # load images
         self.fg_files = self.get_fg_files()
         self.bg_files = self.get_bg_files()
+
+    def folder_to_label(self, image_info):
+        fg_name = image_info['fg'].split('/')[-2]
+        for label, objects in self.LABEL_TO_OBJ.items():
+            if any([obj.upper() in fg_name.upper() for obj in objects]):
+                return label
+        raise ValueError(f'Folder \'{fg_name}\' not belong to any label.')
 
     def get_fg_files(self):
 
